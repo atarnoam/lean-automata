@@ -1,105 +1,72 @@
+import computability.DFA
 import computability.language
 import data.fintype.basic
-import language_addon
+import data.list
+
+import language
 
 
 universes u v w
 
-/--
-The DFA is a left `α*`-module
--/
-structure DFA (α : Type u) [fintype α] (Q : Type v) :=
-(start : Q)
-(accepting : set Q)
-(δ : Q → α → Q)
-
 namespace DFA
 
-variables {α : Type u} [fintype α] {Q : Type v}
+variables {α : Type u}
+variables {σ τ : Type v}
 
 section basics
 
-variables {A : DFA α Q} (q : Q) (σ : α) (w w' : list α)
+variables {A : DFA α σ} (p : σ) (a : α) (x y : list α)
 
-def run_on (A : DFA α Q) (q : Q) (w : list α) : Q :=
-begin
-  revert q,
-  induction w with σ w',
-  exact id,
-  exact λ q, w_ih (A.δ q σ)
-end
+@[simp] lemma eval_from_nil : A.eval_from p [] = p :=
+list.foldl_nil _ _
 
-local infix ` • ` := A.run_on
+@[simp] lemma eval_from_cons : A.eval_from p (a :: x) = A.eval_from (A.step p a) x :=
+list.foldl_cons _ _ _ _
 
-@[simp]
-lemma run_on_nil : q • [] = q := rfl
 
-@[simp]
-lemma run_on_cons : q • (σ :: w) = (A.δ q σ) • w := rfl
+@[simp] lemma eval_def : A.eval x = A.eval_from A.start x := rfl
 
-@[simp] 
-lemma run_chain_assoc : (q • w) • w' = q • (w ++ w') :=
-begin
-  revert q,
-  induction w with σ w;
-  intro q,
-  rw [run_on_nil, list.nil_append],
-  simp [w_ih _],
-end
 
-variable (A)
-
-def accepts : Prop := A.accepting (A.run_on A.start w)
-
-@[simp] lemma accepts_def : (accepts A w) ↔ A.accepting (A.start • w) := 
-by rw accepts
-
-local infix ` ⊨ `:50 := accepts
-
-def language_of : language α := 
-{w : list α | A ⊨ w}
-
-@[simp] lemma language_of_def : w ∈ language_of A ↔ A ⊨ w := 
-iff.refl _
-
-local notation `L ` := language_of
+attribute [simp] mem_accepts
 
 end basics
 
+
 section intersection
+
 /-!
 ### Intersection automaton
 
 Here we construct from two DFAs a DFA whose language is the intersection of the two DFAs, and prove it.
 -/
-variables {Q₁ Q₂ : Type v}
-variables (A : DFA α Q₁) (B : DFA α Q₂) (q₁ : Q₁) (q₂ : Q₂) (σ : α) (w : list α) 
 
-def and_DFA : DFA α (Q₁ × Q₂):=
+variables (A : DFA α σ) (B : DFA α τ) (s : σ) (t : τ) (a : α) (x : list α)
+
+/--
+Given two DFAs, returns a DFA whose language is the intersection of the two DFAs' languages.
+-/
+def inter : DFA α (σ × τ):=
 {
+  step := λ ⟨s, t⟩ a, ⟨A.step s a, B.step t a⟩,
   start := ⟨A.start, B.start⟩,
-  accepting := λ ⟨q₁, q₂⟩, A.accepting q₁ ∧ B.accepting q₂,
-  δ := λ ⟨q₁, q₂⟩ σ, ⟨A.δ q₁ σ, B.δ q₂ σ⟩
+  accept := { st | st.1 ∈ A.accept ∧ st.2 ∈ B.accept}
 }
 
-@[simp] lemma and_start : (and_DFA A B).start = ⟨A.start, B.start⟩ := rfl
-@[simp] lemma and_step : (and_DFA A B).δ ⟨q₁, q₂⟩ σ = ⟨A.δ q₁ σ, B.δ q₂ σ⟩ := rfl
-@[simp] lemma and_accepting : (and_DFA A B).accepting ⟨q₁, q₂⟩ ↔ A.accepting q₁ ∧ B.accepting q₂ := 
+@[simp] lemma inter_step : (inter A B).step (s, t) a = (A.step s a, B.step t a) := rfl
+@[simp] lemma inter_start : (inter A B).start = (A.start, B.start) := rfl
+@[simp] lemma inter_accept : (s, t) ∈ (inter A B).accept  ↔ s ∈ A.accept ∧ t ∈ B.accept := 
 iff.refl _
 
 @[simp]
-lemma and_run : run_on (and_DFA A B) ⟨q₁, q₂⟩ w = ⟨run_on A q₁ w, run_on B q₂ w⟩ :=
+lemma inter_eval_from : eval_from (inter A B) (s, t) x = (eval_from A s x, eval_from B t x) :=
 begin
-  revert q₁ q₂,
-  induction w with σ w,
-  simp,
-  intros q₁ q₂,
-  simp [w_ih _ _],
+  induction x with a x ih generalizing s t,
+  { tauto },
+  { simp [ih _ _] }
 end
 
-lemma and_accepts : accepts (and_DFA A B) w ↔ accepts A w ∧ accepts B w := by simp
-
-theorem and_language : language_of (and_DFA A B) = language_of A ⊓ language_of B := 
+@[simp]
+lemma inter_accepts : accepts (inter A B) = (accepts A) ⊓ (accepts B) := 
 by {ext, simp}
 
 end intersection
@@ -108,35 +75,36 @@ section complement
 /-!
 ### Complement automaton
 
-Here we construct a DFA whose language is the complement of the given DFA.
+Here we construct a DFA whose language is the complement of the given DFA's language.
 -/
  
-variables (A : DFA α Q) (q : Q) (σ : α) (w : list α) 
+variables (A : DFA α σ) (s : σ) (a : α) (x : list α) 
 
-def compl_DFA : DFA α Q :=
+/--
+Given a DFA, returns a DFA whose language is the complement of the given DFA's language.
+-/
+def compl : DFA α σ :=
 {
+  step := A.step,
   start := A.start,
-  accepting := λ q, ¬A.accepting q,
-  δ := A.δ
+  accept := { s | s ∉ A.accept }
 }
 
-@[simp] lemma compl_start : (compl_DFA A).start = A.start := rfl
-@[simp] lemma compl_step : (compl_DFA A).δ = A.δ := rfl
-@[simp] lemma compl_accepting : (compl_DFA A).accepting q = ¬A.accepting q := rfl
+@[simp] lemma compl_step : A.compl.step = A.step := rfl
+@[simp] lemma compl_start : A.compl.start = A.start := rfl
+@[simp] lemma compl_accept : s ∈ A.compl.accept ↔ s ∉ A.accept := by refl
 
 @[simp]
-lemma compl_run : run_on (compl_DFA A) q w = run_on A q w :=
+lemma compl_eval_from : eval_from A.compl s x = eval_from A s x :=
 begin
-  revert q,
-  induction w with σ w,
-  simp,
-  intro q,
-  simp [w_ih _],
+  induction x with a x ih generalizing s,
+  { tauto },
+  { simp [ih _] }
 end
 
-lemma compl_accepts : accepts (compl_DFA A) w ↔ ¬accepts A w := by simp
-
-theorem compl_language : language_of (compl_DFA A) = (language_of A)ᶜ := by {ext, simp}
+@[simp]
+lemma compl_accepts : accepts (compl A) = (accepts A)ᶜ := 
+by {ext, simp}
 
 end complement
 
@@ -145,57 +113,60 @@ section relation
 ### Equivalence relation on `list α`
 Here we give the basics of the equivalence relation on `list α` that we get for every DFA `A`,
 defined as:
-`x ~ y ↔ run_on A A.start x = run_on A A.start y`.
-
+`x ≈ y ↔ A.eval x = A.eval y`.
 -/
 
-variables (A : DFA α Q)
+variables (A : DFA α σ)
 
-definition DFA_rel : list α → list α → Prop :=
-λ x y, run_on A A.start x = run_on A A.start y
+/--
+A relation on `list α`, identifying `x, y` if `A.eval x = A.eval y`.
+-/
+definition rel : list α → list α → Prop :=
+λ x y, A.eval x = A.eval y
 
-@[simp] lemma DFA_rel_def {x y : list α} : DFA_rel A x y ↔ run_on A A.start x = run_on A A.start y := by refl
+@[simp] lemma rel_def {x y : list α} : rel A x y ↔ A.eval x = A.eval y := by refl
 
-lemma is_reflexive : reflexive (DFA_rel A) := λ _, by rw DFA_rel_def
-lemma is_symmetric : symmetric (DFA_rel A) := λ _ _ hxy, eq.symm hxy
-lemma is_transitive : transitive (DFA_rel A) := λ _ _ _ hxy hyz, eq.trans hxy hyz
-lemma is_equivalence : equivalence (DFA_rel A) := ⟨is_reflexive A, is_symmetric A, is_transitive A⟩
+lemma rel_refl : reflexive (rel A) := λ _, by rw rel_def
+lemma rel_symm : symmetric (rel A) := λ _ _ hxy, eq.symm hxy
+lemma rel_trans : transitive (rel A) := λ _ _ _ hxy hyz, eq.trans hxy hyz
+lemma rel_equiv : equivalence (rel A) := ⟨rel_refl A, rel_symm A, rel_trans A⟩
 
-instance DFA_space.setoid : setoid (list α) := setoid.mk (DFA_rel A) (is_equivalence _)
+instance space.setoid : setoid (list α) := setoid.mk A.rel A.rel_equiv
 
-definition DFA_space := quotient (DFA_space.setoid A)
+definition space := quotient (space.setoid A)
 
 variable {A}
 
-definition DFA_space.mk (x : list α) : DFA_space A := @quotient.mk _ (DFA_space.setoid A) x
+definition space.mk (x : list α) : space A := @quotient.mk _ (space.setoid A) x
 
-@[simp] lemma DFA_space.mk_def (x : list α) : DFA_space.mk x = @quotient.mk _ (DFA_space.setoid A) x := rfl
-@[simp] lemma DFA_space.mk_def' (x : list α) : @quotient.mk' _ (DFA_space.setoid A) x = DFA_space.mk x := rfl
+
+@[simp] lemma space.mk_def (x : list α) : space.mk x = @quotient.mk _ (space.setoid A) x := rfl
+@[simp] lemma space.mk_def' (x : list α) : @quotient.mk' _ (space.setoid A) x = space.mk x := rfl
 
 variable (A)
 
 -- The canonical map. We show it is injective, as a part of the proof of Myhill-Nerode.
-def f : DFA_space A → Q :=
+def to_states : space A → σ :=
 begin
-  apply quot.lift (run_on A A.start),
-  intros x y Rab,
-  rw (DFA_rel_def A).1 Rab
+  apply quot.lift A.eval,
+  intros x y rab,
+  rw (rel_def A).1 rab
 end
 
-@[simp] lemma f_def (x : list α) : f A (DFA_space.mk x) = run_on A A.start x := rfl
+@[simp] lemma to_states_def (x : list α) : to_states A (space.mk x) = A.eval x := rfl
 
-lemma injective_f : function.injective (f A) :=
+lemma injective_to_states : function.injective (to_states A) :=
 begin
-  apply @quotient.ind₂' (list α) (list α) _ _ (λ ex ey, f A ex = f A ey → ex = ey) ,
+  apply @quotient.ind₂' (list α) (list α) _ _ (λ ex ey, to_states A ex = to_states A ey → ex = ey) ,
   intros x y h,
-  repeat {rw DFA_space.mk_def' _ at h, rw f_def A _ at h},
+  repeat {rw space.mk_def' _ at h, rw f_def A _ at h},
   simp,
   exact h,
 end
 
 -- What we actually care about, sadly noncomputable :(
-noncomputable instance fintype_DFA_space_of_fintype_states [fintype Q] : fintype (DFA_space A) :=
-fintype.of_injective (f A) (injective_f A)
+noncomputable instance fintype_space_of_fintype_states [fintype σ] : fintype (space A) :=
+fintype.of_injective (to_states A) (injective_to_states A)
 
 end relation
 
